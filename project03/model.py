@@ -22,9 +22,9 @@ class TodoList(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(255))
     description = Column(String(255))
-    priority = Column(String(255))
+    priority = Column(Integer)
     completed = Column(Integer, default=0)
-    user_id = Column(Integer, ForeignKey("users.id"))
+    owner_id = Column(Integer, ForeignKey("users.id"))
 
     def __repr__(self):
         return f"<TodoList(id={self.id}, title='{self.title}')>"

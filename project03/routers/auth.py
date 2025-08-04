@@ -3,8 +3,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from passlib.context import CryptContext
-from fastapi.security import OAuth2PasswordRequestForm
-from jose import jwt
+from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
+from jose import jwt, JWTError
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException
@@ -13,13 +13,16 @@ from starlette.status import HTTP_201_CREATED, HTTP_409_CONFLICT
 from ..database import SessionLocal
 from ..model import Users
 
-router = APIRouter()
+router = APIRouter(
+    prefix="/auth",
+    tags=["auth"]
+)
 
 SECRET_KEY = "dbaf85d5b99d1203c592d4c9e3d63760abfa4f2198de8d7be41364999f6cd411"
 ALGORITHM = "HS256"
 
 
-def get_db():
+async def get_db():
     """
     创建数据库会话并提供依赖注入
 
@@ -36,20 +39,34 @@ def get_db():
 db_dependency = Annotated[Session, Depends(get_db)]
 
 bcrypt_context = CryptContext(schemes=["bcrypt_sha256"], deprecated="auto")
+oauth2_bearer = OAuth2PasswordBearer(tokenUrl="/auth/token")
 
 
-def authenticate_user(username: str, password: str, db: db_dependency):
+async def authenticate_user(username: str, password: str, db: db_dependency):
     user = db.query(Users).filter(Users.username == username).first()
     if (not user) or (not bcrypt_context.verify(password, user.hash_password)):
         return False
     return user
 
 
-def create_access_token(username: str, user_id: int, expires_delta: timedelta):
+async def create_access_token(username: str, user_id: int, expires_delta: timedelta):
     encode = {"sub": username, "id": user_id}
     expires = datetime.now(timezone.utc) + expires_delta
     encode.update({'exp': expires})
     return jwt.encode(encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+async def get_current_user(token: Annotated[str, Depends(oauth2_bearer)]):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        user_id: int = payload.get("id")
+        if username is None or user_id is None:
+            raise HTTPException(status_code=401, detail="could not validate user")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="could not validate user")
+
+    return {"username": username, "user_id": user_id}
 
 
 class CreateUser(BaseModel):
@@ -79,8 +96,8 @@ class Token(BaseModel):
     token_type: str
 
 
-@router.post("/auth/create_user", status_code=HTTP_201_CREATED)
-def create_user(db: db_dependency, user: CreateUser):
+@router.post("/", status_code=HTTP_201_CREATED)
+async def create_user(db: db_dependency, user: CreateUser):
     if db.query(Users).filter(Users.username == user.username).first() and db.query(Users).filter(
             Users.email == user.email).first():
         raise HTTPException(status_code=HTTP_409_CONFLICT, detail="User already exists")
@@ -95,9 +112,9 @@ def create_user(db: db_dependency, user: CreateUser):
 
 
 @router.post("/token", response_model=Token)
-def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()], db: db_dependency):
-    user = authenticate_user(form_data.username, form_data.password, db)
+async def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm, Depends()], db: db_dependency):
+    user = await authenticate_user(form_data.username, form_data.password, db)
     if not user:
-        return "Authenticate Failed"
-    token = create_access_token(user.username, user.id, timedelta(minutes=20))
+        raise HTTPException(status_code=401, detail="Authenticate Failed")
+    token = await create_access_token(user.username, user.id, timedelta(minutes=20))
     return {"access_token": token, "token_type": "bearer"}

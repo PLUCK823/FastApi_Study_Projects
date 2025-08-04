@@ -3,16 +3,21 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from typing import List, Annotated, Optional
 
+from sqlalchemy.testing.suite.test_reflection import users
 from starlette.exceptions import HTTPException
 from starlette.status import HTTP_200_OK, HTTP_201_CREATED, HTTP_204_NO_CONTENT
 
+from .auth import get_current_user
 from ..database import SessionLocal
 from ..model import TodoList
 
-router = APIRouter()
+router = APIRouter(
+    prefix="/todos",
+    tags=["todos"]
+)
 
 
-def get_db():
+async def get_db():
     """
     创建数据库会话并提供依赖注入
 
@@ -27,12 +32,13 @@ def get_db():
 
 
 db_dependency = Annotated[Session, Depends(get_db)]
+user_dependency = Annotated[dict, Depends(get_current_user)]
 
 
 class TodoRequest(BaseModel):
     title: str = Field(min_length=3)
     description: Optional[str] = Field(max_length=255)
-    priority: str = Field(min_length=1, max_length=10)
+    priority: int = Field(ge=1, le=5)
     completed: int = Field(default=0, ge=0, le=1)
 
     model_config = {
@@ -40,15 +46,15 @@ class TodoRequest(BaseModel):
             "example": {
                 "title": "Todo Title",
                 "description": "Todo Description",
-                "priority": "High",
+                "priority": 5,
                 "completed": 0
             }
         }
     }
 
 
-@router.get("/todos", status_code=HTTP_200_OK)
-def get_all_todos(db: db_dependency):
+@router.get("/", status_code=HTTP_200_OK)
+async def get_all_todos(db: db_dependency, user: user_dependency):
     """
     获取所有待办事项列表
 
@@ -58,11 +64,11 @@ def get_all_todos(db: db_dependency):
     Returns:
         List[TodoList]: 所有待办事项列表
     """
-    return db.query(TodoList).all()
+    return db.query(TodoList).filter(TodoList.owner_id == user.get("user_id")).all()
 
 
-@router.get("/todos/{title}", status_code=HTTP_200_OK)
-def get_todo_by_title(title: str, db: db_dependency):
+@router.get("/{title}", status_code=HTTP_200_OK)
+async def get_todo_by_title(title: str, db: db_dependency):
     """
     根据标题获取特定待办事项
 
@@ -82,25 +88,35 @@ def get_todo_by_title(title: str, db: db_dependency):
     return todo
 
 
-@router.post("/todos/add_todo", status_code=HTTP_201_CREATED)
-def add_todo(todo: TodoRequest, db: db_dependency):
+@router.post("/add_todo", status_code=HTTP_201_CREATED)
+async def add_todo(todo: TodoRequest, user: user_dependency, db: db_dependency):
     """
     添加新的待办事项
 
     Args:
         todo (TodoRequest): 待办事项请求数据
+        user (dict): 当前认证用户信息
         db (Session): 数据库会话对象
 
     Returns:
         None: 无返回值，成功创建后返回201状态码
+        
+    Raises:
+        HTTPException: 当用户验证失败或数据库操作失败时抛出
     """
-    todo_model = TodoList(**todo.model_dump())
-    db.add(todo_model)
-    db.commit()
+    if user is None:
+        raise HTTPException(status_code=401, detail="could not validate user")
+    todo_model = TodoList(**todo.model_dump(), owner_id=user.get("user_id"))
+    try:
+        db.add(todo_model)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create todo item")
 
 
-@router.put("/todos/update_todo/{todo_id}", status_code=HTTP_204_NO_CONTENT)
-def update_todo(db: db_dependency, todo: TodoRequest, todo_id: int = Path(gt=0)):
+@router.put("/update_todo/{todo_id}", status_code=HTTP_204_NO_CONTENT)
+async def update_todo(db: db_dependency, todo: TodoRequest, todo_id: int = Path(gt=0)):
     """
     根据ID更新待办事项
 
@@ -129,8 +145,8 @@ def update_todo(db: db_dependency, todo: TodoRequest, todo_id: int = Path(gt=0))
     db.commit()
 
 
-@router.delete("/todos/delete_todo/{todo_id}", status_code=HTTP_204_NO_CONTENT)
-def delete_todo(db: db_dependency, todo_id: int = Path(gt=0)):
+@router.delete("/delete_todo/{todo_id}", status_code=HTTP_204_NO_CONTENT)
+async def delete_todo(db: db_dependency, todo_id: int = Path(gt=0)):
     """
     根据ID删除待办事项
 
