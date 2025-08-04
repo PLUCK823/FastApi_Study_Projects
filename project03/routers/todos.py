@@ -18,12 +18,6 @@ router = APIRouter(
 
 
 async def get_db():
-    """
-    创建数据库会话并提供依赖注入
-
-    Yields:
-        Session: 数据库会话对象
-    """
     db = SessionLocal()
     try:
         yield db
@@ -55,34 +49,16 @@ class TodoRequest(BaseModel):
 
 @router.get("/", status_code=HTTP_200_OK)
 async def get_all_todos(db: db_dependency, user: user_dependency):
-    """
-    获取所有待办事项列表
-
-    Args:
-        db (Session): 数据库会话对象
-
-    Returns:
-        List[TodoList]: 所有待办事项列表
-    """
+    if user is None:
+        raise HTTPException(status_code=401, detail="could not validate user")
     return db.query(TodoList).filter(TodoList.owner_id == user.get("user_id")).all()
 
 
 @router.get("/{title}", status_code=HTTP_200_OK)
-async def get_todo_by_title(title: str, db: db_dependency):
-    """
-    根据标题获取特定待办事项
-
-    Args:
-        title (str): 待办事项标题
-        db (Session): 数据库会话对象
-
-    Returns:
-        TodoList: 匹配的待办事项
-
-    Raises:
-        HTTPException: 当找不到指定标题的待办事项时抛出404异常
-    """
-    todo = db.query(TodoList).filter(TodoList.title == title).first()
+async def get_todo_by_title(title: str, user: user_dependency, db: db_dependency):
+    if user is None:
+        raise HTTPException(status_code=401, detail="could not validate user")
+    todo = db.query(TodoList).filter(TodoList.title == title).filter(TodoList.owner_id == user.get("user_id")).first()
     if todo is None:
         raise HTTPException(status_code=404, detail="Todo not found")
     return todo
@@ -116,22 +92,11 @@ async def add_todo(todo: TodoRequest, user: user_dependency, db: db_dependency):
 
 
 @router.put("/update_todo/{todo_id}", status_code=HTTP_204_NO_CONTENT)
-async def update_todo(db: db_dependency, todo: TodoRequest, todo_id: int = Path(gt=0)):
-    """
-    根据ID更新待办事项
-
-    Args:
-        db (Session): 数据库会话对象
-        todo (TodoRequest): 待办事项更新数据
-        todo_id (int): 待办事项ID，必须大于0
-
-    Returns:
-        None: 无返回值，成功更新后返回204状态码
-
-    Raises:
-        HTTPException: 当找不到指定ID的待办事项时抛出404异常
-    """
-    todo_model = db.query(TodoList).filter(TodoList.id == todo_id).first()
+async def update_todo(user: user_dependency, db: db_dependency, todo: TodoRequest, todo_id: int = Path(gt=0)):
+    if user is None:
+        raise HTTPException(status_code=401, detail="could not validate user")
+    todo_model = db.query(TodoList).filter(TodoList.id == todo_id).filter(
+        TodoList.owner_id == user.get("user_id")).first()
     if todo_model is None:
         raise HTTPException(status_code=404, detail="Todo not found")
 
@@ -146,21 +111,11 @@ async def update_todo(db: db_dependency, todo: TodoRequest, todo_id: int = Path(
 
 
 @router.delete("/delete_todo/{todo_id}", status_code=HTTP_204_NO_CONTENT)
-async def delete_todo(db: db_dependency, todo_id: int = Path(gt=0)):
-    """
-    根据ID删除待办事项
-
-    Args:
-        db (Session): 数据库会话对象
-        todo_id (int): 待办事项ID，必须大于0
-
-    Returns:
-        None: 无返回值，成功删除后返回204状态码
-
-    Raises:
-        HTTPException: 当找不到指定ID的待办事项时抛出404异常
-    """
-    todo_model = db.query(TodoList).filter(TodoList.id == todo_id).first()
+async def delete_todo(user: user_dependency, db: db_dependency, todo_id: int = Path(gt=0)):
+    if user is None:
+        raise HTTPException(status_code=401, detail="could not validate user")
+    todo_model = db.query(TodoList).filter(TodoList.id == todo_id).filter(
+        TodoList.owner_id == user.get("user_id")).first()
     if todo_model is None:
         raise HTTPException(status_code=404, detail="Todo not found")
 

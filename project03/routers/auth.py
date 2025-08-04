@@ -23,12 +23,6 @@ ALGORITHM = "HS256"
 
 
 async def get_db():
-    """
-    创建数据库会话并提供依赖注入
-
-    Yields:
-        Session: 数据库会话对象
-    """
     db = SessionLocal()
     try:
         yield db
